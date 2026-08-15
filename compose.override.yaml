@@ -1,0 +1,18 @@
+services:
+  api:
+    volumes:
+      - ./src:/app:ro  # Bind-mount code so changes reflect instantly
+
+  postman:
+    environment:
+      - DELIVERY_DELAY=1  # Fast feedback for dev
+    volumes:
+      - ./src:/app:ro
+
+  adminer:
+    image: adminer
+    profiles: ["debug"] # Only starts if you use --profile debug
+    networks:
+      - backnet
+    ports:
+      - "8081:8080"

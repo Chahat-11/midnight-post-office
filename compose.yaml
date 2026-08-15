@@ -1,0 +1,112 @@
+services:
+  proxy:
+    image: nginx:1.25-alpine
+    ports:
+      - "8080:80"
+    volumes:
+      - ./proxy/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    networks:
+      - frontnet
+      - backnet
+    depends_on:
+      - api
+    restart: unless-stopped
+
+  api:
+    build:
+      context: .
+      args:
+        APP_VERSION: ${APP_VERSION}
+    image: midnight-post-office:latest
+    environment:
+      DB_HOST: ${DB_HOST}
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD_FILE: /run/secrets/db_password
+      REDIS_HOST: ${REDIS_HOST}
+      APP_VERSION: ${APP_VERSION}
+      MAILROOM: /var/mailroom
+    secrets:
+      - db_password
+    volumes:
+      - mailroom:/var/mailroom:ro
+    networks:
+      - frontnet
+      - backnet
+    depends_on:
+      db:
+        condition: service_healthy
+      queue:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5000/healthz')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  postman:
+    image: midnight-post-office:latest
+    command: python postman.py
+    environment:
+      DB_HOST: ${DB_HOST}
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD_FILE: /run/secrets/db_password
+      REDIS_HOST: ${REDIS_HOST}
+      DELIVERY_DELAY: ${DELIVERY_DELAY}
+      MAILROOM: /var/mailroom
+    secrets:
+      - db_password
+    volumes:
+      - mailroom:/var/mailroom
+    networks:
+      - backnet
+    depends_on:
+      db:
+        condition: service_healthy
+      queue:
+        condition: service_healthy
+    restart: unless-stopped
+
+  queue:
+    image: redis:7-alpine
+    networks:
+      - backnet
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD_FILE: /run/secrets/db_password
+    secrets:
+      - db_password
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    networks:
+      - backnet
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
+secrets:
+  db_password:
+    file: ./secrets/db_password.txt
+
+networks:
+  frontnet:
+  backnet:
+
+volumes:
+  pgdata:
+  mailroom:

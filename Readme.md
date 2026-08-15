@@ -175,4 +175,3 @@ docker compose down
 | ORM/Driver | psycopg2-binary | 2.9.9 |
 | Python | Python | 3.12-slim |
 
-# midnight-post-office

@@ -1,0 +1,23 @@
+services:
+  api:
+    deploy:
+      resources:
+        limits:
+          cpus: '0.50'
+          memory: 128M
+
+  postman:
+    environment:
+      - DELIVERY_DELAY=8  # Real delivery takes time
+    deploy:
+      replicas: 3         # Horizontal scaling!
+      resources:
+        limits:
+          cpus: '0.50'
+          memory: 128M
+
+  db:
+    deploy:
+      resources:
+        limits:
+          memory: 256M
