@@ -1,10 +1,13 @@
-import os, socket
+import os
+import socket
 from flask import Flask, request, redirect
-import psycopg2, redis
+import psycopg2
+import redis
 
 app = Flask(__name__)
-VERSION  = os.environ.get("APP_VERSION", "unknown")   # ← comes from a build ARG 👀
+VERSION = os.environ.get("APP_VERSION", "unknown")   # ← comes from a build ARG 👀
 MAILROOM = os.environ.get("MAILROOM", "/var/mailroom")
+
 
 def secret(name, default=""):
     # Reads NAME_FILE (a Docker secret) if present, else falls back to NAME.
@@ -15,6 +18,7 @@ def secret(name, default=""):
             return f.read().strip()
     return os.environ.get(name, default)
 
+
 def db():
     return psycopg2.connect(
         host=os.environ["DB_HOST"],
@@ -24,8 +28,10 @@ def db():
         connect_timeout=3,
     )
 
+
 def queue():
     return redis.Redis(host=os.environ["REDIS_HOST"], port=6379, decode_responses=True)
+
 
 def init_db():
     with db() as conn, conn.cursor() as cur:
@@ -37,6 +43,7 @@ def init_db():
             delivered_at TIMESTAMPTZ,
             delivered_by TEXT
         )""")
+
 
 PAGE = """<!DOCTYPE html><html><head><title>Midnight Post Office</title>
 <meta http-equiv="refresh" content="4">
@@ -66,6 +73,7 @@ PAGE = """<!DOCTYPE html><html><head><title>Midnight Post Office</title>
 <ul>__ITEMS__</ul>
 <p class="bar">this page refreshes itself — watch pending letters turn delivered 🌙</p>
 </body></html>"""
+
 
 @app.route("/")
 def home():
@@ -99,6 +107,7 @@ def home():
                 .replace("__HOST__", socket.gethostname())
                 .replace("__Q__", str(qlen)).replace("__MAIL__", str(mail)))
 
+
 @app.route("/send", methods=["POST"])
 def send():
     note = request.form.get("note", "").strip()
@@ -110,15 +119,19 @@ def send():
         queue().lpush("outbox", letter_id)   # ← hand off to the postman 📬
     return redirect("/")
 
+
 @app.route("/healthz")
 def healthz():
     # You will point a healthcheck at this. It must touch BOTH dependencies.
-    db().close(); queue().ping()
+    db().close()
+    queue().ping()
     return "ok\n", 200
+
 
 @app.route("/whoami")
 def whoami():
     return f"api container: {socket.gethostname()} (v{VERSION})\n"
+
 
 @app.route("/mailroom")
 def mailroom():
@@ -127,6 +140,7 @@ def mailroom():
         return "\n".join(sorted(os.listdir(MAILROOM))) + "\n"
     except Exception as e:
         return f"mailroom unreadable: {e}\n", 500
+
 
 @app.route("/tamper")
 def tamper():

@@ -1,9 +1,13 @@
-import os, time, socket
-import psycopg2, redis
+import os
+import time
+import socket
+import psycopg2
+import redis
 
 MAILROOM = os.environ.get("MAILROOM", "/var/mailroom")
-DELAY    = int(os.environ.get("DELIVERY_DELAY", "4"))
-ME       = socket.gethostname()
+DELAY = int(os.environ.get("DELIVERY_DELAY", "4"))
+ME = socket.gethostname()
+
 
 def secret(name, default=""):
     path = os.environ.get(f"{name}_FILE")
@@ -12,11 +16,13 @@ def secret(name, default=""):
             return f.read().strip()
     return os.environ.get(name, default)
 
+
 def db():
     return psycopg2.connect(
         host=os.environ["DB_HOST"], dbname=os.environ["POSTGRES_DB"],
         user=os.environ["POSTGRES_USER"], password=secret("POSTGRES_PASSWORD"),
         connect_timeout=3)
+
 
 r = redis.Redis(host=os.environ["REDIS_HOST"], port=6379, decode_responses=True)
 
