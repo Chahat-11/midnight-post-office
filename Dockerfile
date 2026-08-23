@@ -12,7 +12,7 @@ ENV APP_VERSION=$APP_VERSION
 WORKDIR /app
 
 COPY --from=builder /wheels /wheels
-RUN pip install --no-index --find-links=/wheels /wheels/*.whl
+RUN pip install --no-cache-dir --no-index --find-links=/wheels /wheels/*.whl
 
 COPY src/ .
 
