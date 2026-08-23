@@ -1,0 +1,127 @@
+name: CI/CD
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/midnight-post-office
+
+jobs:
+  lint-and-unit-test:
+    name: Lint & unit tests
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: |
+          pip install -r src/requirements.txt
+          pip install flake8 pytest
+
+      - name: Lint
+        run: flake8 src/ --max-line-length=100 --extend-exclude=__pycache__
+
+      - name: Unit tests
+        run: pytest tests/ -v
+
+  dockerfile-lint:
+    name: Dockerfile lint
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hadolint/hadolint-action@v3.1.0
+        with:
+          dockerfile: Dockerfile
+
+  build-and-integration-test:
+    name: Build image & run check.sh
+    runs-on: macos-latest
+    needs: [lint-and-unit-test, dockerfile-lint]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Create dev env + secret for CI
+        run: |
+          cat > .env <<EOF
+          POSTGRES_USER=postgres
+          POSTGRES_DB=postoffice
+          DB_HOST=db
+          REDIS_HOST=queue
+          APP_VERSION=${{ github.sha }}
+          DELIVERY_DELAY=2
+          EOF
+          mkdir -p secrets
+          echo "ci-test-password" > secrets/db_password.txt
+
+      - name: Build & start the stack
+        run: docker compose up -d --build
+
+      - name: Wait for services to settle
+        run: sleep 5
+
+      - name: Run self-check (check.sh)
+        run: ./check.sh
+
+      - name: Show logs on failure
+        if: failure()
+        run: docker compose logs
+
+      - name: Tear down
+        if: always()
+        run: docker compose down -v
+
+  scan-image:
+    name: Vulnerability scan
+    runs-on: macos-latest 
+    needs: build-and-integration-test
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build image for scanning
+        run: docker build --build-arg APP_VERSION=${{ github.sha }} -t midnight-post-office:scan .
+
+      - name: Trivy scan
+        uses: aquasecurity/trivy-action@0.24.0
+        with:
+          image-ref: midnight-post-office:scan
+          severity: CRITICAL,HIGH
+          exit-code: "0" 
+
+  push-image:
+    name: Push image to GHCR
+    runs-on: macos-latest
+    needs: [build-and-integration-test, scan-image]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          build-args: |
+            APP_VERSION=${{ github.sha }}
+          push: true
+          tags: |
+            ${{ env.IMAGE_NAME }}:latest
+            ${{ env.IMAGE_NAME }}:${{ github.sha }}
+
+  
