@@ -16,7 +16,7 @@ RUN pip install --no-cache-dir --no-index --find-links=/wheels /wheels/*.whl
 
 COPY src/ .
 
-RUN useradd -m postie
+RUN useradd -m postie 
 USER postie
 
 CMD ["gunicorn", "--bind", "0.0.0.0:5000", "app:app"]

@@ -1,12 +1,14 @@
 import os
 import socket
-from flask import Flask, request, redirect
+from flask import Flask, request, redirect, render_template, jsonify
 import psycopg2
 import redis
 
 app = Flask(__name__)
 VERSION = os.environ.get("APP_VERSION", "unknown")   # ← comes from a build ARG 👀
 MAILROOM = os.environ.get("MAILROOM", "/var/mailroom")
+MAX_NOTE = 200
+_schema_ready = False
 
 
 def secret(name, default=""):
@@ -34,6 +36,10 @@ def queue():
 
 
 def init_db():
+    # Only needs to succeed once per process — skip the round-trip after that.
+    global _schema_ready
+    if _schema_ready:
+        return
     with db() as conn, conn.cursor() as cur:
         cur.execute("""CREATE TABLE IF NOT EXISTS letters (
             id SERIAL PRIMARY KEY,
@@ -43,81 +49,87 @@ def init_db():
             delivered_at TIMESTAMPTZ,
             delivered_by TEXT
         )""")
+    _schema_ready = True
 
 
-PAGE = """<!DOCTYPE html><html><head><title>Midnight Post Office</title>
-<meta http-equiv="refresh" content="4">
-<style>
- body{font-family:Georgia,serif;background:#1e1b2e;color:#f0e6f5;max-width:640px;
-      margin:40px auto;padding:0 20px}
- h1{color:#ffc4dd;text-align:center;font-weight:400}
- .bar{text-align:center;color:#9c8bab;font-size:.8rem;margin-bottom:20px}
- form{display:flex;gap:10px;margin:22px 0}
- input{flex:1;padding:12px;border:1px solid #4a3f5c;border-radius:10px;
-       background:#2a2136;color:#f0e6f5;font-size:1rem}
- button{background:#d05f86;color:#fff;border:0;border-radius:10px;padding:12px 20px;cursor:pointer}
- li{list-style:none;background:#2a2136;border-radius:10px;padding:12px 16px;margin-bottom:9px;
-    border-left:3px solid #4a3f5c}
- li.delivered{border-left-color:#4e9c85}
- small{color:#9c8bab}
- .tag{float:right;font-size:.7rem;padding:2px 9px;border-radius:99px}
- .pending{background:#5a4a20;color:#ffd98a}
- .done{background:#1f4a3c;color:#8ce0c0}
-</style></head><body>
-<h1>📮 The Midnight Post Office</h1>
-<div class="bar">v__VER__ · served by __HOST__ · queue: __Q__ · mailroom: __MAIL__ files</div>
-<form action="/send" method="post">
-  <input name="note" placeholder="write a letter for the midnight post…" maxlength="200" required>
-  <button>post it 📮</button>
-</form>
-<ul>__ITEMS__</ul>
-<p class="bar">this page refreshes itself — watch pending letters turn delivered 🌙</p>
-</body></html>"""
-
-
-@app.route("/")
-def home():
+def snapshot():
+    # Everything the page shows, gathered defensively so one dead service
+    # degrades the page instead of crashing it.
+    letters, db_ok = [], True
     try:
         init_db()
-        with db() as conn, conn.cursor() as cur:
-            cur.execute("""SELECT id, note, status, delivered_by
-                           FROM letters ORDER BY id DESC LIMIT 25""")
-            rows = cur.fetchall()
+        conn = db()
+        try:
+            with conn, conn.cursor() as cur:
+                cur.execute("""SELECT id, note, status, delivered_by, written_at, delivered_at
+                               FROM letters ORDER BY id DESC LIMIT 25""")
+                rows = cur.fetchall()
+        finally:
+            conn.close()
+        letters = [{
+            "id": i,
+            "note": note,
+            "delivered": status == "delivered",
+            "delivered_by": by,
+            "written_at": w.isoformat() if w else None,
+            "delivered_at": d.isoformat() if d else None,
+        } for i, note, status, by, w, d in rows]
     except Exception:
-        rows = []
+        db_ok = False
 
     try:
         qlen = queue().llen("outbox")
     except Exception:
-        qlen = "unreachable ❌"
+        qlen = None
     try:
         mail = len(os.listdir(MAILROOM))
     except Exception:
-        mail = "no mailroom ❌"
+        mail = None
 
-    items = ""
-    for i, note, status, by in rows:
-        cls = "delivered" if status == "delivered" else ""
-        tag = (f'<span class="tag done">delivered by {by}</span>' if status == "delivered"
-               else '<span class="tag pending">in transit</span>')
-        items += f'<li class="{cls}">{tag}#{i} — {note}</li>'
-    items = items or "<li>the post office is empty… send something 💌</li>"
+    return {
+        "version": VERSION,
+        "host": socket.gethostname(),
+        "db_ok": db_ok,
+        "queue": qlen,
+        "mailroom": mail,
+        "letters": letters,
+    }
 
-    return (PAGE.replace("__ITEMS__", items).replace("__VER__", VERSION)
-                .replace("__HOST__", socket.gethostname())
-                .replace("__Q__", str(qlen)).replace("__MAIL__", str(mail)))
+
+def wants_json():
+    return request.headers.get("Accept", "").startswith("application/json")
+
+
+@app.route("/")
+def home():
+    return render_template("index.html", s=snapshot(), max_note=MAX_NOTE)
+
+
+@app.route("/api/letters")
+def api_letters():
+    return jsonify(snapshot())
 
 
 @app.route("/send", methods=["POST"])
 def send():
-    note = request.form.get("note", "").strip()
-    if note:
+    note = request.form.get("note", "").strip()[:MAX_NOTE]
+    if not note:
+        if wants_json():
+            return jsonify(error="your letter is empty"), 400
+        return redirect("/", code=303)
+    try:
         init_db()
         with db() as conn, conn.cursor() as cur:
             cur.execute("INSERT INTO letters (note) VALUES (%s) RETURNING id", (note,))
             letter_id = cur.fetchone()[0]
         queue().lpush("outbox", letter_id)   # ← hand off to the postman 📬
-    return redirect("/")
+    except Exception:
+        if wants_json():
+            return jsonify(error="the post office is closed right now — try again soon"), 503
+        return redirect("/", code=303)
+    if wants_json():
+        return jsonify(id=letter_id), 201
+    return redirect("/", code=303)
 
 
 @app.route("/healthz")

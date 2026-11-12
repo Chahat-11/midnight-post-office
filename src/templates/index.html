@@ -1,0 +1,410 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The Midnight Post Office</title>
+<meta name="description" content="Write a letter, watch it travel through a queue and get delivered by a background worker.">
+<meta name="theme-color" content="#12101f">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📮</text></svg>">
+<style>
+  :root {
+    --bg: #12101f;
+    --bg-2: #1a1730;
+    --card: #211d38;
+    --card-2: #2a2545;
+    --line: #3a3358;
+    --text: #f1ebf7;
+    --muted: #a69cbd;
+    --faint: #6f6689;
+    --accent: #ff8fb8;
+    --accent-2: #d05f86;
+    --gold: #ffd98a;
+    --gold-bg: rgba(255, 217, 138, .12);
+    --green: #8ce0c0;
+    --green-bg: rgba(140, 224, 192, .12);
+    --red: #ff9a9a;
+    --radius: 14px;
+    --serif: "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif;
+    --sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
+  body {
+    margin: 0;
+    min-height: 100vh;
+    background:
+      radial-gradient(1200px 600px at 50% -200px, #2b2350 0%, transparent 70%),
+      var(--bg);
+    color: var(--text);
+    font: 16px/1.55 var(--sans);
+  }
+  .wrap { max-width: 720px; margin: 0 auto; padding: 48px 16px 64px; }
+
+  /* header */
+  header { text-align: center; margin-bottom: 32px; }
+  .moon { font-size: 2.6rem; line-height: 1; filter: drop-shadow(0 0 18px rgba(255, 217, 138, .35)); }
+  h1 {
+    font: 400 clamp(1.8rem, 5vw, 2.5rem)/1.15 var(--serif);
+    margin: 12px 0 8px; color: #ffd0e2; letter-spacing: .2px;
+  }
+  .lede { color: var(--muted); margin: 0 auto; max-width: 480px; }
+
+  /* compose */
+  .compose {
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    padding: 18px;
+    box-shadow: 0 20px 50px -30px rgba(0, 0, 0, .8);
+  }
+  .compose label { display: block; font: 1.05rem var(--serif); margin-bottom: 10px; color: #ffd0e2; }
+  textarea {
+    width: 100%; min-height: 96px; resize: vertical;
+    padding: 14px; border-radius: 10px;
+    border: 1px solid var(--line); background: var(--bg-2); color: var(--text);
+    font: 1rem/1.5 var(--serif);
+  }
+  textarea::placeholder { color: var(--faint); font-style: italic; }
+  textarea:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px rgba(255, 143, 184, .18); }
+  .compose-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 12px; }
+  .hint { color: var(--faint); font-size: .8rem; }
+  .hint kbd { font: .75rem var(--mono); border: 1px solid var(--line); border-radius: 4px; padding: 1px 5px; }
+  .count { font: .8rem var(--mono); color: var(--faint); margin-right: 4px; }
+  .count.warn { color: var(--gold); }
+  button {
+    border: 0; border-radius: 10px; cursor: pointer;
+    background: linear-gradient(180deg, var(--accent), var(--accent-2));
+    color: #fff; font: 600 .95rem var(--sans); padding: 11px 20px;
+    transition: transform .1s, opacity .2s;
+  }
+  button:hover { transform: translateY(-1px); }
+  button:active { transform: translateY(0); }
+  button:disabled { opacity: .55; cursor: wait; transform: none; }
+  .actions { display: flex; align-items: center; gap: 10px; margin-left: auto; }
+
+  /* banner + toast */
+  .banner {
+    margin: 0 0 16px; padding: 12px 14px; border-radius: 10px;
+    background: rgba(255, 154, 154, .1); border: 1px solid rgba(255, 154, 154, .35); color: var(--red);
+    font-size: .9rem;
+  }
+  .toast {
+    position: fixed; left: 50%; bottom: 24px; transform: translate(-50%, 20px);
+    background: var(--card-2); border: 1px solid var(--line); color: var(--text);
+    padding: 10px 16px; border-radius: 10px; font-size: .9rem; opacity: 0;
+    transition: opacity .2s, transform .2s; pointer-events: none; max-width: calc(100% - 32px);
+  }
+  .toast.show { opacity: 1; transform: translate(-50%, 0); }
+
+  /* behind the counter */
+  h2 {
+    font: 400 1.2rem var(--serif); color: #ffd0e2; margin: 40px 0 14px;
+    display: flex; align-items: baseline; justify-content: space-between; gap: 12px;
+  }
+  h2 small { font: .78rem var(--sans); color: var(--faint); }
+  .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
+  .stat {
+    background: var(--card); border: 1px solid var(--line); border-radius: 12px;
+    padding: 12px 14px; min-width: 0;
+  }
+  .stat .k { font-size: .72rem; text-transform: uppercase; letter-spacing: .08em; color: var(--faint); }
+  .stat .v {
+    font: 600 1.05rem var(--mono); margin-top: 4px;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .stat .v.bad { color: var(--red); font-size: .9rem; }
+
+  .pipeline {
+    display: flex; flex-wrap: wrap; align-items: center; gap: 6px;
+    margin-top: 12px; font-size: .8rem; color: var(--muted);
+  }
+  .pipeline span.node {
+    background: var(--bg-2); border: 1px solid var(--line); border-radius: 99px; padding: 3px 10px;
+  }
+  .pipeline span.arrow { color: var(--faint); }
+
+  /* letters */
+  ul.letters { list-style: none; padding: 0; margin: 0; display: grid; gap: 10px; }
+  .letter {
+    position: relative;
+    background: var(--card); border: 1px solid var(--line); border-radius: 12px;
+    padding: 14px 16px 12px 18px; overflow: hidden;
+    animation: rise .35s ease both;
+  }
+  .letter::before {
+    content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 3px; background: var(--gold);
+  }
+  .letter.delivered::before { background: var(--green); }
+  .letter.just-delivered { animation: glow 1.4s ease; }
+  .letter .note {
+    font: 1.05rem/1.5 var(--serif); margin: 0 0 10px;
+    white-space: pre-wrap; overflow-wrap: anywhere;
+  }
+  .meta { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; font-size: .78rem; color: var(--faint); }
+  .meta .id { font-family: var(--mono); }
+  .tag { margin-left: auto; font-size: .74rem; padding: 3px 10px; border-radius: 99px; white-space: nowrap; }
+  .tag.pending { background: var(--gold-bg); color: var(--gold); }
+  .tag.pending::before {
+    content: ""; display: inline-block; width: 6px; height: 6px; border-radius: 50%;
+    background: currentColor; margin-right: 6px; vertical-align: 1px; animation: pulse 1.2s infinite;
+  }
+  .tag.done { background: var(--green-bg); color: var(--green); }
+  .tag.done code { font: .72rem var(--mono); }
+  .empty {
+    text-align: center; color: var(--muted); padding: 36px 16px;
+    border: 1px dashed var(--line); border-radius: 12px; font-family: var(--serif);
+  }
+
+  footer { margin-top: 48px; text-align: center; color: var(--faint); font-size: .8rem; }
+  footer nav { display: flex; flex-wrap: wrap; justify-content: center; gap: 6px 14px; margin-bottom: 10px; }
+  footer a { color: var(--muted); text-decoration: none; font-family: var(--mono); }
+  footer a:hover { color: var(--accent); }
+  .live { display: inline-flex; align-items: center; gap: 6px; }
+  .live i { width: 7px; height: 7px; border-radius: 50%; background: var(--green); display: inline-block; }
+  .live.off i { background: var(--faint); }
+
+  @keyframes rise { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+  @keyframes pulse { 50% { opacity: .3; } }
+  @keyframes glow {
+    0% { box-shadow: 0 0 0 0 rgba(140, 224, 192, .5); border-color: var(--green); }
+    100% { box-shadow: 0 0 0 12px rgba(140, 224, 192, 0); }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before { animation: none !important; transition: none !important; }
+  }
+  @media (max-width: 600px) {
+    .wrap { padding-top: 32px; }
+    .stats { grid-template-columns: repeat(2, 1fr); }
+    .hint { display: none; }
+  }
+</style>
+</head>
+<body>
+<main class="wrap">
+  <header>
+    <div class="moon" aria-hidden="true">🌙</div>
+    <h1>The Midnight Post Office</h1>
+    <p class="lede">Write a short letter. It joins a queue, a postman picks it up, and a few seconds later it's delivered.</p>
+  </header>
+
+  <div id="banner" class="banner" {% if s.db_ok %}hidden{% endif %}>
+    The letter archive can't be reached right now. The post office will reopen once the database is back.
+  </div>
+
+  <form class="compose" id="compose" action="/send" method="post">
+    <label for="note">Dear stranger…</label>
+    <textarea id="note" name="note" maxlength="{{ max_note }}" required
+              placeholder="write a letter for the midnight post…"></textarea>
+    <div class="compose-row">
+      <span class="hint"><kbd>⌘</kbd>/<kbd>Ctrl</kbd> + <kbd>Enter</kbd> to send</span>
+      <div class="actions">
+        <span class="count" id="count">0/{{ max_note }}</span>
+        <button type="submit" id="send">Post it 📮</button>
+      </div>
+    </div>
+  </form>
+
+  <h2>Behind the counter <small class="live" id="live"><i></i> live</small></h2>
+  <div class="stats">
+    <div class="stat"><div class="k">Served by</div><div class="v" id="st-host" title="{{ s.host }}">{{ s.host }}</div></div>
+    <div class="stat"><div class="k">Outbox queue</div>
+      <div class="v{% if s.queue is none %} bad{% endif %}" id="st-queue">{{ s.queue if s.queue is not none else "unreachable" }}</div></div>
+    <div class="stat"><div class="k">Mailroom files</div>
+      <div class="v{% if s.mailroom is none %} bad{% endif %}" id="st-mail">{{ s.mailroom if s.mailroom is not none else "missing" }}</div></div>
+    <div class="stat"><div class="k">Build</div><div class="v" id="st-ver" title="{{ s.version }}">{{ s.version[:7] }}</div></div>
+  </div>
+  <div class="pipeline" aria-label="Request path">
+    <span class="node">browser</span><span class="arrow">→</span>
+    <span class="node">nginx</span><span class="arrow">→</span>
+    <span class="node">flask api</span><span class="arrow">→</span>
+    <span class="node">redis outbox</span><span class="arrow">→</span>
+    <span class="node">postman worker</span><span class="arrow">→</span>
+    <span class="node">postgres + mailroom</span>
+  </div>
+
+  <h2>Recent letters <small>last 25</small></h2>
+  <ul class="letters" id="letters">
+    {% for l in s.letters %}
+    <li class="letter{% if l.delivered %} delivered{% endif %}" data-id="{{ l.id }}">
+      <p class="note">{{ l.note }}</p>
+      <div class="meta">
+        <span class="id">#{{ l.id }}</span>
+        <time datetime="{{ l.written_at or '' }}"></time>
+        {% if l.delivered %}
+        <span class="tag done">delivered by <code>{{ l.delivered_by }}</code></span>
+        {% else %}
+        <span class="tag pending">in transit</span>
+        {% endif %}
+      </div>
+    </li>
+    {% else %}
+    <li class="empty">The post office is empty… be the first to send something 💌</li>
+    {% endfor %}
+  </ul>
+
+  <footer>
+    <nav aria-label="Diagnostics">
+      <a href="/healthz">/healthz</a>
+      <a href="/whoami">/whoami</a>
+      <a href="/mailroom">/mailroom</a>
+      <a href="/tamper">/tamper</a>
+      <a href="/api/letters">/api/letters</a>
+    </nav>
+    Flask · Redis · Postgres · Nginx · Docker Compose
+  </footer>
+</main>
+
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+<script>
+(() => {
+  const $ = (id) => document.getElementById(id);
+  const form = $("compose"), note = $("note"), btn = $("send"), list = $("letters");
+  const max = Number(note.maxLength);
+  const delivered = new Set(
+    [...list.querySelectorAll(".letter.delivered")].map((li) => li.dataset.id)
+  );
+
+  // --- helpers ---
+  const ago = (iso) => {
+    if (!iso) return "";
+    const s = Math.max(0, (Date.now() - new Date(iso)) / 1000);
+    if (s < 45) return "just now";
+    if (s < 3600) return Math.round(s / 60) + " min ago";
+    if (s < 86400) return Math.round(s / 3600) + " h ago";
+    return new Date(iso).toLocaleDateString();
+  };
+  const el = (tag, cls, text) => {
+    const n = document.createElement(tag);
+    if (cls) n.className = cls;
+    if (text != null) n.textContent = text;   // textContent = never interpreted as HTML
+    return n;
+  };
+  let toastTimer;
+  const toast = (msg) => {
+    const t = $("toast");
+    t.textContent = msg;
+    t.classList.add("show");
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => t.classList.remove("show"), 3200);
+  };
+  const setStat = (id, value, fallback) => {
+    const n = $(id);
+    n.textContent = value == null ? fallback : value;
+    n.classList.toggle("bad", value == null);
+  };
+  const stampTimes = () =>
+    list.querySelectorAll("time").forEach((t) => (t.textContent = ago(t.dateTime)));
+
+  // --- rendering ---
+  const renderLetter = (l) => {
+    const li = el("li", "letter" + (l.delivered ? " delivered" : ""));
+    li.dataset.id = l.id;
+    li.appendChild(el("p", "note", l.note));
+    const meta = el("div", "meta");
+    meta.appendChild(el("span", "id", "#" + l.id));
+    const t = el("time");
+    t.dateTime = l.written_at || "";
+    meta.appendChild(t);
+    if (l.delivered) {
+      const tag = el("span", "tag done", "delivered by ");
+      tag.appendChild(el("code", null, l.delivered_by));
+      meta.appendChild(tag);
+    } else {
+      meta.appendChild(el("span", "tag pending", "in transit"));
+    }
+    li.appendChild(meta);
+    return li;
+  };
+
+  const render = (s) => {
+    $("banner").hidden = s.db_ok;
+    $("st-host").textContent = s.host;
+    $("st-host").title = s.host;
+    setStat("st-queue", s.queue, "unreachable");
+    setStat("st-mail", s.mailroom, "missing");
+    $("st-ver").textContent = String(s.version).slice(0, 7);
+    $("st-ver").title = s.version;
+
+    if (!s.db_ok) return;   // keep the last good list on screen
+    const shown = new Set([...list.querySelectorAll(".letter")].map((li) => li.dataset.id));
+    const frag = document.createDocumentFragment();
+    if (!s.letters.length) {
+      frag.appendChild(el("li", "empty", "The post office is empty… be the first to send something 💌"));
+    }
+    for (const l of s.letters) {
+      const li = renderLetter(l);
+      const key = String(l.id);
+      if (l.delivered && !delivered.has(key)) {
+        li.classList.add("just-delivered");
+        delivered.add(key);
+      } else if (shown.has(key)) {
+        li.style.animation = "none";   // only animate rows that are new or changed
+      }
+      frag.appendChild(li);
+    }
+    list.replaceChildren(frag);
+    stampTimes();
+  };
+
+  // --- live polling (pauses while the tab is hidden) ---
+  let timer;
+  const refresh = async () => {
+    clearTimeout(timer);
+    try {
+      const r = await fetch("/api/letters", { headers: { Accept: "application/json" }, cache: "no-store" });
+      if (!r.ok) throw new Error(r.status);
+      render(await r.json());
+      $("live").classList.remove("off");
+    } catch {
+      $("live").classList.add("off");
+    }
+    if (!document.hidden) timer = setTimeout(refresh, 2500);
+  };
+  document.addEventListener("visibilitychange", () => { if (!document.hidden) refresh(); });
+
+  // --- composing ---
+  const updateCount = () => {
+    const n = note.value.length;
+    $("count").textContent = `${n}/${max}`;
+    $("count").classList.toggle("warn", n > max * 0.9);
+  };
+  note.addEventListener("input", updateCount);
+  note.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) form.requestSubmit();
+  });
+
+  form.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const text = note.value.trim();
+    if (!text) { toast("Write something first ✍️"); return; }
+    btn.disabled = true;
+    try {
+      const r = await fetch("/send", {
+        method: "POST",
+        headers: { Accept: "application/json" },
+        body: new URLSearchParams({ note: text }),
+      });
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(data.error || "Couldn't post your letter");
+      note.value = "";
+      updateCount();
+      toast(`Letter #${data.id} is on its way 🚴`);
+      refresh();
+    } catch (err) {
+      toast(err.message);
+    } finally {
+      btn.disabled = false;
+      note.focus();
+    }
+  });
+
+  stampTimes();
+  updateCount();
+  timer = setTimeout(refresh, 2500);
+})();
+</script>
+</body>
+</html>

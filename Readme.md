@@ -73,6 +73,7 @@ It's designed to showcase modern DevOps and software engineering patterns in a s
 - **Role**: HTTP server handling user requests
 - **Endpoints**:
   - `GET /` – Display pending/delivered letters
+  - `GET /api/letters` – Same data as JSON (the page polls this to update live)
   - `POST /send` – Queue a letter for delivery
   - `GET /mailroom` – View delivered letter files
   - `GET /healthz` – Health check
@@ -124,7 +125,7 @@ It's designed to showcase modern DevOps and software engineering patterns in a s
    └─> UPDATE letters SET status='delivered', delivered_by='{hostname}'
    └─> Writes letter content: /var/mailroom/letter-{id}.txt
 
-5. Browser auto-refreshes (meta refresh)
+5. Browser polls GET /api/letters every few seconds
    └─> Shows letter as "delivered by {postman-hostname}"
    └─> /mailroom endpoint shows shared files
 ```
